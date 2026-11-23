@@ -96,6 +96,8 @@ class HostService:
         provider: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> Host:
         if provider:
             registered = get_provider_names()
@@ -125,7 +127,9 @@ class HostService:
         # Pool members are warmed at the provider's defaults, so only an
         # uncustomized request can claim one.
         requested_provider = provider or self.settings.default_host_provider
-        customized = env or secrets or image or template or instance_type or disk_gb
+        customized = (
+            env or secrets or image or template or instance_type or disk_gb or cpu or memory_gb
+        )
         if not customized and self.settings.get_pool_targets().get(requested_provider):
             host = await self._try_claim_pool_host(
                 service_account=service_account,
@@ -145,6 +149,8 @@ class HostService:
                 provider=provider,
                 instance_type=instance_type,
                 disk_gb=disk_gb,
+                cpu=cpu,
+                memory_gb=memory_gb,
             )
 
         if idempotency_key and not await self._record_idempotency_key(idempotency_key, host):
@@ -237,6 +243,8 @@ class HostService:
         provider: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
         pool_member: bool = False,
     ) -> Host:
         # The pool maintainer calls this, not get_or_create_host, so a top-up
@@ -249,6 +257,14 @@ class HostService:
         if disk_gb and not vm.supports_disk_gb:
             raise provider_exceptions.UnsupportedSizingError(
                 f"provider {vm.name!r} does not support a per-request disk_gb"
+            )
+        if cpu and not vm.supports_cpu:
+            raise provider_exceptions.UnsupportedSizingError(
+                f"provider {vm.name!r} does not support a per-request cpu"
+            )
+        if memory_gb and not vm.supports_memory_gb:
+            raise provider_exceptions.UnsupportedSizingError(
+                f"provider {vm.name!r} does not support a per-request memory_gb"
             )
         proxy = self.settings.secrets_proxy_url and self.settings.secrets_proxy_ca_file
         if secrets and not vm.secrets.needs_value and not proxy:
@@ -285,6 +301,8 @@ class HostService:
             image=image or vm.default_image,
             instance_type=instance_type,
             disk_gb=disk_gb,
+            cpu=cpu,
+            memory_gb=memory_gb,
             status=HostStatus.PROVISIONING.value,
             created_at=now,
             updated_at=now,
@@ -565,6 +583,8 @@ class HostService:
                 setup_script=setup_script,
                 instance_type=host.instance_type,
                 disk_gb=host.disk_gb,
+                cpu=host.cpu,
+                memory_gb=host.memory_gb,
             )
         except provider_exceptions.ProviderError as exc:
             await self.mark_failed(host, exc)

@@ -34,6 +34,8 @@ class DockerSbxProvider(VMProvider, TemplateCapability):
     gateway_process_class = SbxExecProcess
     # sbx spends about 3 seconds on startup per call.
     diagnose_timeout_seconds: ClassVar[float] = 15.0
+    supports_cpu = True
+    supports_memory_gb = True
 
     def __init__(
         self,
@@ -75,6 +77,8 @@ class DockerSbxProvider(VMProvider, TemplateCapability):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         caller_env = env or {}
         try:
@@ -94,8 +98,8 @@ class DockerSbxProvider(VMProvider, TemplateCapability):
                 name=name,
                 template=image,
                 workspace=str(workspace),
-                cpus=self.settings.cpus,
-                memory=self.settings.memory,
+                cpus=cpu or self.settings.cpus,
+                memory=f"{memory_gb}g" if memory_gb else self.settings.memory,
             )
         except DockerSbxProviderError as exc:
             # The CLI can fail after the daemon made the sandbox.

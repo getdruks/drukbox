@@ -43,6 +43,8 @@ class E2BProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         sandbox = await self.api.create_sandbox(name, image=image, label=self.service_label)
         await self.api.bootstrap(sandbox, environment.get_cloud_init(setup_script or "", env))

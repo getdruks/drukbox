@@ -41,6 +41,8 @@ class DaytonaProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         await self.api.check_snapshot(image)
         await self.api.create_sandbox(name, image=image, label=self.service_label)

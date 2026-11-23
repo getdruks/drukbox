@@ -270,8 +270,8 @@ builds, and then removes the Docker image.
 
 A sandbox creation takes approximately 20 seconds with a warm template
 cache, and more than 30 seconds at the first pull. Thus a warm pool
-(`POOL_SIZES`) is useful. Each sandbox gets the explicit
-`DOCKER_SBX_CPUS` and `DOCKER_SBX_MEMORY` sizes. Without them,
+(`POOL_SIZES`) is useful. A sandbox gets the `cpu` and `memory_gb` of its
+request, or the `DOCKER_SBX_CPUS` and `DOCKER_SBX_MEMORY` sizes. Without them,
 the daemon gives one sandbox all host CPUs and half of the host memory.
 
 ## The SSH gateway
@@ -637,7 +637,11 @@ together):
 
 exe.dev provider. exe puts `--env` where only a login shell reads it, so
 the setup script also writes the exports to `~/.bashrc`, which every bash
-session on the box reads.
+session on the box reads. `disk_gb` sets the disk. `cpu` and `memory_gb` set the VM's size in the
+account's shared capacity. They are its ceiling, not a reservation: the VM
+shares that capacity with the account's other VMs.
+exe.dev refuses a size over the account's plan, and the host goes to
+`error` with its reason.
 
 exe.dev provider:
 
@@ -728,8 +732,8 @@ Docker Sandboxes provider:
 | `DOCKER_SBX_DEFAULT_IMAGE` | `ghcr.io/czpython/drukbox/sbx-sandbox:latest` | Template image that contains sshd and starts without environment variables. Build `images/sbx/Dockerfile` to change it. |
 | `DOCKER_SBX_SSH_USERNAME` | `root` | User in the sandbox for caller SSH access. |
 | `DOCKER_SBX_BOOTSTRAP_SSH_TIMEOUT_SECONDS` | `30.0` | Time limit for the ssh-keyscan tries on a new sandbox. |
-| `DOCKER_SBX_CPUS` | `2` | Number of CPUs for each sandbox. |
-| `DOCKER_SBX_MEMORY` | `2g` | Memory for each sandbox, in binary units. |
+| `DOCKER_SBX_CPUS` | `2` | Number of CPUs for a sandbox when the caller omits `cpu`. |
+| `DOCKER_SBX_MEMORY` | `2g` | Memory for a sandbox when the caller omits `memory_gb`, in binary units. |
 | `DOCKER_SBX_WORKSPACE_ROOT` | `~/.drukbox/sbx-workspaces` | Directory with one temporary workspace for each sandbox, and a `secrets` directory with the value files sbx reads. The path must be the same for drukbox and for the daemon. |
 
 The published image does not contain the `sbx` CLI. Mount the binary and

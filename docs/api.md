@@ -40,6 +40,13 @@ or claimed the host, `admin` for an admin key, or `null` for an unclaimed
 warm host. Callers cannot set it. An `Idempotency-Key` belongs to the
 service account that first used it. Another one reusing it gets `409`.
 
+`POST /hosts` takes `cpu` (vCPUs) and `memory_gb` to size the VM. exe and
+docker-sbx honor both, and Vercel honors `cpu`. A request for a provider that cannot size a VM this way
+gets `400` before any host or VM exists. A size the provider's account does
+not allow fails the host: it goes to `error` with the provider's reason. A
+request with no size gets the provider's default size. A sized request never
+claims a warm host.
+
 `POST /hosts` returns `503` with `CAPACITY` and `Retry-After` when the
 provider has `HOST_LIMITS` live hosts, or when the caller's service account
 has `HOST_LIMIT_PER_SERVICE_ACCOUNT` live hosts. A live host is not in

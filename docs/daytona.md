@@ -9,7 +9,7 @@ Create a Daytona host through the existing API:
 The `image` field selects a prepared Daytona snapshot name or ID. The
 snapshot can be a Linux VM or a container; the provider rejects Windows
 snapshots. CPU, memory, and disk come from the snapshot. Per-host
-`instance_type` and `disk_gb` are not supported.
+`instance_type`, `disk_gb`, `cpu`, and `memory_gb` are not supported.
 
 A Linux VM has its own kernel. A container shares the host kernel, and
 Daytona cannot pause it. Linux VMs can be unavailable to an organization: a

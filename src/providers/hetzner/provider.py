@@ -57,6 +57,8 @@ class HetznerProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         # Always mint a per-VM key, on or off the tailnet: Hetzner servers
         # have a public IP and no firewall by default, and attaching a key both

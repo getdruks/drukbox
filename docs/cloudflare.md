@@ -39,8 +39,8 @@ The token can also come from `/run/secrets/CLOUDFLARE_WORKER_TOKEN`.
 ## Limits
 
 - `image` is an alias from `containers[].images` in `wrangler.jsonc`. An added
-  image needs the tools in `deploy/cloudflare/Dockerfile`. Template builds and
-  `disk_gb` are not supported.
+  image needs the tools in `deploy/cloudflare/Dockerfile`. Template builds,
+  `disk_gb`, `cpu`, and `memory_gb` are not supported.
 - Without `/dev/net/tun`, Tailscale runs in userspace, so the container
   reaches `SECRETS_PROXY_URL` over its normal outbound network, not over the
   tailnet.

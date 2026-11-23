@@ -82,6 +82,9 @@ class Host(Base):
     # server type). NULL means the provider's configured default size.
     instance_type: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     disk_gb: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    # Per-request size in vCPUs and GB of memory. NULL leaves it to the provider.
+    cpu: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    memory_gb: Mapped[int | None] = mapped_column(nullable=True, default=None)
     # Reachable SSH addresses. Both populated when Tailscale is enabled
     # (internal = MagicDNS name, external = provider-given address); only
     # external_ssh_host is populated when Tailscale is disabled. The

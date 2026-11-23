@@ -19,6 +19,9 @@ from providers.exe.settings import ExeSettings
 class ExeProvider(VMProvider, TemplateCapability):
     name: ClassVar[str] = "exe"
     diagnose_hint: ClassVar[str] = "check_exe_dev_api_token_and_url"
+    supports_disk_gb = True
+    supports_cpu = True
+    supports_memory_gb = True
 
     def __init__(
         self,
@@ -61,6 +64,8 @@ class ExeProvider(VMProvider, TemplateCapability):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         # exe.dev assumes a public image. An image on the configured registry
         # host gets --registry-auth (see https://exe.dev/docs/private-image).
@@ -76,6 +81,9 @@ class ExeProvider(VMProvider, TemplateCapability):
             setup_script=setup_script,
             tags=[f"managed-by-{self._service_label}"],
             registry_auth=registry_auth,
+            disk_gb=disk_gb,
+            cpu=cpu,
+            memory_gb=memory_gb,
         )
         return VMCreateResult(
             provider_id=str(payload["vm_name"]),

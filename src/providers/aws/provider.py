@@ -66,6 +66,8 @@ class AWSProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         if image.startswith("ami-"):
             ami_id = image
@@ -223,5 +225,5 @@ async def _detect_outbound_ipv4(timeout: float = 5.0) -> str | None:
         addr = ipaddress.ip_address(response.text.strip())
     except ValueError:
         return
-    if isinstance(addr, ipaddress.IPv4Address):
+    if addr.version == 4:
         return str(addr)

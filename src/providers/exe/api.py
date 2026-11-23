@@ -6,14 +6,7 @@ import httpx
 
 from providers import environment
 
-from .exceptions import (
-    ExeAuthError,
-    ExeCommandError,
-    ExeIntegrationAlreadyExistsError,
-    ExeIntegrationNotFoundError,
-    ExeResponseError,
-    ExeVMNotFoundError,
-)
+from . import exceptions
 from .settings import ExeSettings
 
 # Creating the VM itself is fast, but `new` waits on the setup script, and the
@@ -78,6 +71,9 @@ class ExeAPI:
         tags: list[str] | None = None,
         no_email: bool = True,
         registry_auth: str | None = None,
+        disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> dict[str, Any]:
         command_parts = ["new", "--json"]
 
@@ -91,6 +87,15 @@ class ExeAPI:
 
         if registry_auth:
             command_parts.append(f"--registry-auth={shlex.quote(registry_auth)}")
+
+        if disk_gb:
+            command_parts.append(f"--disk={disk_gb}GB")
+
+        if cpu:
+            command_parts.append(f"--cpu={cpu}")
+
+        if memory_gb:
+            command_parts.append(f"--memory={memory_gb}GB")
 
         if env:
             # exe puts --env in /etc/profile.d. Only a login shell reads it.
@@ -107,7 +112,7 @@ class ExeAPI:
         if setup_script:
             encoded = _encode_setup_script(setup_script)
             if len(encoded) > SETUP_SCRIPT_LIMIT:
-                raise ExeCommandError(
+                raise exceptions.ExeCommandError(
                     f"the setup script is {len(encoded)} bytes, over the exe.dev limit of "
                     f"{SETUP_SCRIPT_LIMIT}"
                 )
@@ -144,7 +149,7 @@ class ExeAPI:
         for vm in await self.list_vms(pattern=name):
             if vm["vm_name"] == name:
                 return vm
-        raise ExeVMNotFoundError(f"exe.dev VM '{name}' was not found")
+        raise exceptions.ExeVMNotFoundError(f"exe.dev VM '{name}' was not found")
 
     async def restart_vm(self, name: str) -> dict[str, Any]:
         return await self._exec_dict(f"restart --json {shlex.quote(name)}")
@@ -155,9 +160,9 @@ class ExeAPI:
     async def delete_vm(self, name: str) -> dict[str, Any]:
         try:
             return await self._exec_dict(f"rm --json {shlex.quote(name)}")
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             if "not found" in str(exc).lower():
-                raise ExeVMNotFoundError(f"exe.dev VM '{name}' was not found") from exc
+                raise exceptions.ExeVMNotFoundError(f"exe.dev VM '{name}' was not found") from exc
             raise
 
     async def create_http_proxy(
@@ -180,9 +185,9 @@ class ExeAPI:
 
         try:
             await self._request(" ".join(command_parts))
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             if "already exists" in str(exc).lower():
-                raise ExeIntegrationAlreadyExistsError(
+                raise exceptions.ExeIntegrationAlreadyExistsError(
                     f"exe.dev integration '{name}' already exists"
                 ) from exc
             raise
@@ -206,9 +211,9 @@ class ExeAPI:
 
         try:
             await self._request(" ".join(command_parts))
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             if "not found" in str(exc).lower():
-                raise ExeIntegrationNotFoundError(
+                raise exceptions.ExeIntegrationNotFoundError(
                     f"exe.dev integration '{name}' was not found"
                 ) from exc
             raise
@@ -218,21 +223,23 @@ class ExeAPI:
         payload = self._parse_json_response(response.text)
 
         if not isinstance(payload, list):
-            raise ExeResponseError("exe.dev integrations list returned non-array JSON output")
+            raise exceptions.ExeResponseError(
+                "exe.dev integrations list returned non-array JSON output"
+            )
 
         names: list[str] = []
         for integration in payload:
             if not isinstance(integration, dict) or not isinstance(integration.get("name"), str):
-                raise ExeResponseError("exe.dev integration returned an invalid name")
+                raise exceptions.ExeResponseError("exe.dev integration returned an invalid name")
             names.append(integration["name"])
         return names
 
     async def delete_http_proxy(self, name: str) -> None:
         try:
             await self._request(f"integrations remove {shlex.quote(name)}")
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             if "not found" in str(exc).lower():
-                raise ExeIntegrationNotFoundError(
+                raise exceptions.ExeIntegrationNotFoundError(
                     f"exe.dev integration '{name}' was not found"
                 ) from exc
             raise
@@ -241,19 +248,19 @@ class ExeAPI:
         target = shlex.quote(f"vm:{attach_vm}")
         try:
             await self._request(f"integrations attach {shlex.quote(name)} {target}")
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             self._raise_attachment_error(exc, integration=name, attach_vm=attach_vm)
 
     async def detach_http_proxy(self, name: str, *, attach_vm: str) -> None:
         target = shlex.quote(f"vm:{attach_vm}")
         try:
             await self._request(f"integrations detach {shlex.quote(name)} {target}")
-        except ExeCommandError as exc:
+        except exceptions.ExeCommandError as exc:
             self._raise_attachment_error(exc, integration=name, attach_vm=attach_vm)
 
     @staticmethod
     def _raise_attachment_error(
-        exc: ExeCommandError,
+        exc: exceptions.ExeCommandError,
         *,
         integration: str,
         attach_vm: str,
@@ -268,10 +275,10 @@ class ExeAPI:
         # the target as `vm:<name>`, so loose substring matches like `"vm" in detail`
         # would misroute integration errors that echo the target token.
         if "integration" in detail or "http-proxy" in detail or "http_proxy" in detail:
-            raise ExeIntegrationNotFoundError(
+            raise exceptions.ExeIntegrationNotFoundError(
                 f"exe.dev integration '{integration}' was not found"
             ) from exc
-        raise ExeVMNotFoundError(f"exe.dev VM '{attach_vm}' was not found") from exc
+        raise exceptions.ExeVMNotFoundError(f"exe.dev VM '{attach_vm}' was not found") from exc
 
     async def whoami(self) -> dict[str, Any]:
         return await self._exec_dict("whoami --json")
@@ -290,7 +297,7 @@ class ExeAPI:
         payload = self._parse_json_response(response.text)
 
         if not isinstance(payload, dict):
-            raise ExeResponseError("exe.dev API returned non-object JSON output")
+            raise exceptions.ExeResponseError("exe.dev API returned non-object JSON output")
         return payload
 
     async def _request(
@@ -302,19 +309,21 @@ class ExeAPI:
             )
         except httpx.RequestError as exc:
             # {exc!r}, not {exc}: bare transport errors like ReadTimeout() stringify empty.
-            raise ExeResponseError(f"exe.dev API transport failed: {exc!r}") from exc
+            raise exceptions.ExeResponseError(f"exe.dev API transport failed: {exc!r}") from exc
 
         if response.status_code == 401:
-            raise ExeAuthError("exe.dev API authentication failed")
+            raise exceptions.ExeAuthError("exe.dev API authentication failed")
 
         if 400 <= response.status_code < 500:
             detail = response.text.strip()
             if not detail:
                 detail = f"exe.dev API command failed with status {response.status_code}"
-            raise ExeCommandError(detail)
+            raise exceptions.ExeCommandError(detail)
 
         if response.status_code >= 500:
-            raise ExeResponseError(f"exe.dev API request failed with status {response.status_code}")
+            raise exceptions.ExeResponseError(
+                f"exe.dev API request failed with status {response.status_code}"
+            )
         return response
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -339,7 +348,7 @@ class ExeAPI:
         chunks = [line.strip() for line in text.splitlines() if line.strip()]
 
         if not chunks:
-            raise ExeResponseError("exe.dev API returned empty output")
+            raise exceptions.ExeResponseError("exe.dev API returned empty output")
 
         parsed_chunks: list[dict[str, Any] | list[dict[str, Any]]] = []
 
@@ -347,7 +356,7 @@ class ExeAPI:
             try:
                 parsed_chunks.append(json.loads(chunk))
             except json.JSONDecodeError as exc:
-                raise ExeResponseError("exe.dev API returned non-JSON output") from exc
+                raise exceptions.ExeResponseError("exe.dev API returned non-JSON output") from exc
 
         if len(parsed_chunks) == 1:
             return parsed_chunks[0]
@@ -358,4 +367,4 @@ class ExeAPI:
                 if isinstance(chunk, dict):
                     merged.update(chunk)
             return merged
-        raise ExeResponseError("exe.dev API returned unsupported multi-part JSON output")
+        raise exceptions.ExeResponseError("exe.dev API returned unsupported multi-part JSON output")

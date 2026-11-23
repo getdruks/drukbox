@@ -4,7 +4,6 @@ from typing import ClassVar, Self
 from core.settings import get_settings
 from providers import environment
 from providers.base import VMCreateResult, VMProvider
-from providers.exceptions import ProviderCommandError
 
 from .api import VercelAPI
 from .settings import VercelSettings
@@ -15,7 +14,7 @@ class VercelProvider(VMProvider):
     diagnose_hint: ClassVar[str] = "check_vercel_and_tailscale_settings"
     # The sandbox has no public SSH address.
     tailnet = True
-    supports_instance_type = True
+    supports_cpu = True
 
     def __init__(self, api: VercelAPI, settings: VercelSettings, *, service_label: str) -> None:
         self.api = api
@@ -45,13 +44,11 @@ class VercelProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
-        try:
-            vcpus = int(instance_type or self.settings.vcpus)
-        except ValueError:
-            raise ProviderCommandError("Vercel instance_type must be a vCPU count") from None
         session_id = await self.api.create_sandbox(
-            name, image=image, vcpus=vcpus, label=self.service_label
+            name, image=image, vcpus=cpu or self.settings.vcpus, label=self.service_label
         )
         await self.api.bootstrap(session_id, environment.get_cloud_init(setup_script or "", env))
         return VMCreateResult(provider_id=session_id, name=name, ssh_username="root")

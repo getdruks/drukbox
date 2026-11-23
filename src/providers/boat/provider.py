@@ -45,6 +45,8 @@ class BoatProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         size = instance_type or self.settings.instance_type
         if size not in {"small", "default", "large"}:

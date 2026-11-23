@@ -164,6 +164,19 @@ async def test_provision_forwards_sizing_from_the_row_to_create_vm(monkeypatch):
     assert create_vm_kwargs["disk_gb"] == 250
 
 
+async def test_provision_forwards_cpu_and_memory_from_the_row_to_create_vm(monkeypatch):
+    host = await create_host_record(name="lb-cpu", status="provisioning", cpu=8, memory_gb=16)
+    mocks = await _patch_provision_happy_path(monkeypatch)
+
+    async with async_session_factory() as session:
+        session.add(host)
+        await HostService(session).provision(host)
+
+    assert mocks["create_vm"].await_args
+    create_vm_kwargs = mocks["create_vm"].await_args.kwargs
+    assert (create_vm_kwargs["cpu"], create_vm_kwargs["memory_gb"]) == (8, 16)
+
+
 async def test_provision_threads_ssh_username_from_vm_result_onto_host(monkeypatch):
     # The provider knows which user the image runs as.
     mocks = await _patch_provision_happy_path(monkeypatch)
@@ -529,6 +542,8 @@ async def create_host_record(
     image: str | None = None,
     instance_type: str | None = None,
     disk_gb: int | None = None,
+    cpu: int | None = None,
+    memory_gb: int | None = None,
     tailscale_device_id: str | None = None,
 ) -> Host:
     now = utc_now()
@@ -539,6 +554,8 @@ async def create_host_record(
         image=image or ExeSettings().default_image,  # pyright: ignore[reportCallIssue]
         instance_type=instance_type,
         disk_gb=disk_gb,
+        cpu=cpu,
+        memory_gb=memory_gb,
         internal_ssh_host=f"{name}.example.ts.net",
         external_ssh_host="",
         env=env or {},

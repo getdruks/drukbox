@@ -305,6 +305,25 @@ async def test_a_stopped_vm_still_counts_against_its_service_account(monkeypatch
         )
 
 
+async def test_create_host_skips_pool_when_given_a_cpu_and_memory_size(
+    multi_pool_settings, monkeypatch
+):
+    pool_host = await _seed_pool_host(name="lb-pool-exe", provider="exe")
+    mocked_provision = AsyncMock()
+    monkeypatch.setattr("hosts.service.HostService.provision", mocked_provision)
+
+    async with async_session_factory() as session:
+        service = HostService(session, settings=multi_pool_settings)
+        result = await service.get_or_create_host(
+            env={}, image=None, provider="exe", cpu=8, memory_gb=16
+        )
+
+    assert result.id != pool_host.id
+    assert not result.claimed_at
+    assert (result.cpu, result.memory_gb) == (8, 16)
+    mocked_provision.assert_awaited_once()
+
+
 async def test_create_host_skips_pool_when_sized(multi_pool_settings, monkeypatch, stub_provider):
     # Pool members are warmed at the provider's default size, so a sized
     # request must provision fresh even when its provider has a warm host.
