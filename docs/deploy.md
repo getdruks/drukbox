@@ -360,9 +360,15 @@ group — see
 
 On the tailnet, sandboxes join at boot and callers connect over the
 overlay. This requires the `TAILSCALE_` settings, a Tailscale OAuth
-client with auth-key write scope, and tailnet ACLs that (a) own the
-tags in `TAILSCALE_AUTH_TAGS` and (b) permit tailscaled-SSH to the
-tagged nodes.
+client and tailnet ACLs that (a) own the tags in `TAILSCALE_AUTH_TAGS` and
+(b) permit tailscaled-SSH to the tagged nodes. The client needs two scopes,
+both for those tags: `auth_keys` write, and `devices:core` write, which
+includes read. drukbox lists devices to find the sandbox that joined, and
+deletes the device when it deletes the host. Without the devices scope the
+Tailscale API answers `404` on the device list and the host fails with
+`DeviceDiscoveryTimeoutError`. A sandbox advertises the tags of
+its auth key. A caller can narrow them with `TAILSCALE_ADVERTISE_TAGS` in the
+host's `env`.
 
 ## Private image registry
 

@@ -516,7 +516,12 @@ class HostService:
             except NetworkError as exc:
                 await self.mark_failed(host, exc)
                 return
+            # A caller that names the tags to advertise keeps them. Otherwise the node
+            # advertises the tags of its auth key, not the script's default.
+            advertise = environment.get("TAILSCALE_ADVERTISE_TAGS")
             environment.update(join_credentials.env)
+            if advertise:
+                environment["TAILSCALE_ADVERTISE_TAGS"] = advertise
             setup_script = _SANDBOX_BOOTSTRAP_SCRIPT
 
         try:

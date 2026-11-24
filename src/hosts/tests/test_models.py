@@ -1,5 +1,5 @@
+import datetime
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -25,7 +25,12 @@ async def _patch_provision_happy_path(monkeypatch, *, ssh_port: int = 22) -> dic
     take the host all the way to ACTIVE. Returns the mocks for assertion."""
     mocks = {
         "issue_join_credentials": AsyncMock(
-            return_value=JoinCredentials(env={"TAILSCALE_AUTHKEY": "tskey-secret"}),
+            return_value=JoinCredentials(
+                env={
+                    "TAILSCALE_AUTHKEY": "tskey-secret",
+                    "TAILSCALE_ADVERTISE_TAGS": "tag:from-key",
+                }
+            ),
         ),
         "create_vm": AsyncMock(
             return_value=VMCreateResult(
@@ -123,6 +128,21 @@ async def test_provision_walks_host_to_active(monkeypatch):
     assert wait_kwargs["host_name"] == "exe-runtime-1"
 
 
+async def test_provision_advertises_the_tags_of_the_auth_key_by_default(monkeypatch):
+    # A caller that names no tags gets the tags of the node's auth key, which are the
+    # only tags Tailscale lets the node advertise.
+    host = await create_host_record(name="lb-key-tags", status="provisioning")
+    mocks = await _patch_provision_happy_path(monkeypatch)
+
+    async with async_session_factory() as session:
+        session.add(host)
+        await HostService(session).provision(host)
+
+    assert mocks["create_vm"].await_args
+    env = mocks["create_vm"].await_args.kwargs["env"]
+    assert env["TAILSCALE_ADVERTISE_TAGS"] == "tag:from-key"
+
+
 async def test_provision_forwards_sizing_from_the_row_to_create_vm(monkeypatch):
     # provision() reads sizing off the host row, not from request state, so a
     # janitor-retried or resumed provision still launches the requested size.
@@ -192,7 +212,7 @@ async def test_create_host_clears_safety_ttl_when_caller_omits_one(monkeypatch):
 
 async def test_create_host_lands_on_caller_ttl_on_success(monkeypatch):
     await _patch_provision_happy_path(monkeypatch)
-    caller_ttl = utc_now() + timedelta(hours=2)
+    caller_ttl = utc_now() + datetime.timedelta(hours=2)
 
     async with async_session_factory() as session:
         created = await HostService(session).create_host(env={}, image=None, expires_at=caller_ttl)
@@ -536,7 +556,9 @@ async def create_host_record(
 async def test_expires_at_with_non_utc_offset_round_trips_as_utc():
     # SQLite drops tz offsets, so the bind-time UTC normalization must preserve
     # the instant: 2099-01-01T00:00-08:00 must read back as 08:00Z, not 00:00Z.
-    offset_expires = datetime(2099, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=-8)))
+    offset_expires = datetime.datetime(
+        2099, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=-8))
+    )
     host = Host(
         id=uuid7(),
         name="sb-offset-test",
@@ -559,4 +581,4 @@ async def test_expires_at_with_non_utc_offset_round_trips_as_utc():
     async with async_session_factory() as session:
         reloaded = await session.get(Host, host.id)
         assert reloaded
-        assert reloaded.expires_at == datetime(2099, 1, 1, 8, 0, tzinfo=UTC)
+        assert reloaded.expires_at == datetime.datetime(2099, 1, 1, 8, 0, tzinfo=datetime.UTC)
