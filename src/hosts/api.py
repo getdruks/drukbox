@@ -6,11 +6,11 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Respo
 from sqlalchemy.exc import SQLAlchemyError
 
 from host_secrets.schemas import SECRET_NAME_PATTERN
+from hosts import runs, schemas
 from hosts.auth import require_auth
 from hosts.deps import get_host_service
 from hosts.exceptions import HostTeardownError
 from hosts.models import Host
-from hosts.schemas import ExpiresAt, HostCreate, HostOut
 from hosts.service import HostService
 from networking.tailscale import NetworkError
 from providers.exceptions import ProviderError, UnknownProviderError, UnsupportedSizingError
@@ -22,11 +22,11 @@ router = APIRouter(prefix="/hosts", tags=["hosts"], dependencies=[Depends(requir
 HostServiceDep = Annotated[HostService, Depends(get_host_service)]
 
 
-@router.post("", response_model=HostOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=schemas.HostOut, status_code=status.HTTP_201_CREATED)
 async def create_host(
     service: HostServiceDep,
     service_account: Annotated[str | None, Depends(require_auth)],
-    payload: HostCreate | None = None,
+    payload: schemas.HostCreate | None = None,
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -42,7 +42,7 @@ async def create_host(
         ),
     ] = None,
 ) -> Host:
-    host_create = payload or HostCreate()
+    host_create = payload or schemas.HostCreate()
     permanent = "expires_at" in host_create.model_fields_set and not host_create.expires_at
 
     try:
@@ -69,24 +69,54 @@ async def create_host(
         ) from exc
 
 
-@router.get("", response_model=list[HostOut])
+@router.post("/runs", response_model=runs.RunOut)
+async def run_command(
+    payload: runs.RunCreate,
+    service: HostServiceDep,
+    service_account: Annotated[str | None, Depends(require_auth)],
+) -> runs.RunResult:
+    """Run one command on a host that exists for it: sync the tree, run, delete the host."""
+    try:
+        return await service.run_command(
+            service_account=service_account,
+            env=payload.env,
+            secrets={name: entry.to_storage() for name, entry in payload.secrets.items()},
+            image=payload.image,
+            template=payload.template,
+            provider=payload.provider,
+            instance_type=payload.instance_type,
+            disk_gb=payload.disk_gb,
+            url=payload.repo.url,
+            commit=payload.repo.commit,
+            patch=payload.patch,
+            command=payload.command,
+            timeout=payload.timeout_seconds,
+        )
+    except (UnknownProviderError, UnsupportedSizingError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.exception("unexpected database error during a run")
+        raise HTTPException(status_code=503, detail="the run could not be completed") from exc
+
+
+@router.get("", response_model=list[schemas.HostOut])
 async def list_hosts(service: HostServiceDep) -> list[Host]:
     return await service.list_hosts()
 
 
-@router.get("/{host_id}", response_model=HostOut)
+@router.get("/{host_id}", response_model=schemas.HostOut)
 async def get_host(host_id: uuid.UUID, service: HostServiceDep) -> Host:
     if host := await service.get_host(host_id):
         return host
     raise HTTPException(status_code=404, detail="host not found")
 
 
-@router.post("/{host_id}/renew", response_model=HostOut)
+@router.post("/{host_id}/renew", response_model=schemas.HostOut)
 async def renew_host(
     host_id: uuid.UUID,
     service: HostServiceDep,
     expires_at: Annotated[
-        ExpiresAt,
+        schemas.ExpiresAt,
         Body(
             embed=True,
             description=(

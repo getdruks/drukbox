@@ -27,6 +27,7 @@ migration, has no token, and cannot be removed. Admin keys act as it.
   admin keys only
 
 - `POST /hosts` · `GET /hosts` · `GET /hosts/{id}` · `DELETE /hosts/{id}`
+- `POST /hosts/runs` — run one command on a host that exists for it
 - `POST /templates` · `GET /templates` · `GET /templates/{id}` ·
   `DELETE /templates/{id}`
 - `POST /http-proxies` · `DELETE /http-proxies/{name}` ·
@@ -49,6 +50,48 @@ has `HOST_LIMIT_PER_SERVICE_ACCOUNT` live hosts. A live host is not in
 secret until a person acts. The detail is the issuer's reason, for example
 that the GitHub App is not on the repository. A retry gets the same answer
 until then.
+
+## Run a command
+
+`POST /hosts/runs` creates a host, puts a repo on it, runs one command, and
+deletes the host before it answers. The body takes the host fields of
+`POST /hosts` (`provider`, `template` or `image`, `env`, `secrets`,
+`instance_type`, `disk_gb`) and these:
+
+- `repo`: `url` to clone and the `commit` to check out. A private repo needs a
+  secret that the sandbox reaches through the secrets exchange.
+- `patch`: optional. A `git diff --binary` that `git apply` lays over the commit, so
+  the caller's uncommitted and untracked files are on the host.
+- `command`: a shell command that runs in the root of the checkout.
+- `timeout_seconds`: 600 by default, 14400 at most. The command is killed after it.
+
+The answer is `200` with `exit_code`, `timed_out`, `output` (the last 20000
+characters of stdout and stderr together) and `duration_seconds`. A command that
+fails still gets `200` and its exit code. `exit_code` is `null` when the command
+timed out, and `-1` when a signal killed it.
+
+The host never comes from the warm pool, because a pool member's private key
+went out with the response that created it. `expires_at` is refused. The lease
+starts when the run does, after the host is up, and lasts 20 minutes for the
+clone and the patch, plus the timeout, plus five minutes. The janitor reaps the
+host at the end of it if the request dies. A host that cannot be deleted at
+once stays until then, and the caller still gets its result. So does a run
+whose host was deleted meanwhile.
+
+A provider that stops its VMs a fixed time after it creates them refuses a run
+that cannot fit in that time.
+
+- `502` with `PROVISIONING_FAILED`: The host could not be created.
+- `502` with `HOST_UNREACHABLE`: drukbox could not open SSH to the host, or lost
+  it during the run. It connects with the key that the provider returned at
+  creation. A provider that
+  returns none, such as exe.dev, needs a tailnet that lets drukbox's own node
+  SSH to the host.
+- `502` with `RUN_SYNC`: The clone or the patch failed. The detail has the end of
+  its output.
+- `422` with `RUN_TOO_LONG`: The provider stops its VMs sooner than provisioning,
+  the sync, the timeout and the grace add up to. The provider counts a VM's life
+  from its creation, so the check allows `PROVISIONING_GRACE_SECONDS` for it.
 
 ## Refresh a host secret
 

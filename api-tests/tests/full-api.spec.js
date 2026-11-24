@@ -20,6 +20,7 @@ const EXPECTED_OPENAPI_OPERATIONS = [
   "POST /http-proxies",
   "POST /http-proxies/{name}/hosts/{host_id}",
   "POST /hosts",
+  "POST /hosts/runs",
   "POST /hosts/{host_id}/renew",
   "POST /hosts/{host_id}/secrets/{service}/refresh",
   "POST /templates",
@@ -51,6 +52,12 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const HTTP_PROXY_TARGET = "https://httpbin.org";
+
+// A public repo at a fixed commit, for the run endpoint's clone.
+const RUN_REPO = {
+  url: "https://github.com/czpython/drukbox-python-sdk",
+  commit: "be85ab0c1bffe99103b41df889b319ca51223e96",
+};
 
 // Account-bound HTTP proxies exist only on exe.dev. The lifecycle test skips
 // for all other providers.
@@ -173,6 +180,41 @@ test.describe("Drukbox API", () => {
       expect(payload.detail[0].loc).toEqual(["body", "env"]);
       expect(payload.detail[0].msg).toContain(`reserved env keys are not allowed: ${key}`);
     }
+  });
+
+  test("POST /hosts/runs rejects missing and bad auth, and a body that is not a run", async () => {
+    const data = { repo: RUN_REPO, command: "true" };
+    await expectStatus(await publicApi.post("/hosts/runs", { data }), 401);
+    await expectStatus(await badTokenApi.post("/hosts/runs", { data }), 403);
+    await expectStatus(await api.post("/hosts/runs", { data: { repo: RUN_REPO } }), 422);
+    const withLease = { ...data, expires_at: "2999-01-01T00:00:00Z" };
+    const payload = await expectJson(await api.post("/hosts/runs", { data: withLease }), 422);
+    expect(JSON.stringify(payload.detail)).toContain("expires_at");
+  });
+
+  test("POST /hosts/runs runs a command on a host that exists for it", async () => {
+    test.setTimeout(config.hostActiveTimeoutMs);
+    const data = {
+      repo: RUN_REPO,
+      command: "git rev-parse HEAD; exit 3",
+      timeout_seconds: 120,
+    };
+    if (config.hostImage) {
+      data.image = config.hostImage;
+    }
+
+    const before = await expectJson(await api.get("/hosts"), 200);
+    const result = await expectJson(
+      await api.post("/hosts/runs", { data, timeout: config.hostActiveTimeoutMs }),
+      200,
+    );
+
+    expect(result.exit_code).toBe(3);
+    expect(result.timed_out).toBe(false);
+    expect(result.output).toContain(RUN_REPO.commit);
+    expect(result.duration_seconds).toBeGreaterThanOrEqual(0);
+    const after = await expectJson(await api.get("/hosts"), 200);
+    expect(after.length).toBe(before.length);
   });
 
   test("POST /hosts creates a host inline and returns it active", async () => {

@@ -101,6 +101,21 @@ async def test_create_host_claims_pool_member_when_eligible(pooled_settings, mon
     mocked_provision.assert_not_awaited()
 
 
+async def test_a_host_that_is_not_to_claim_a_pool_member_is_created(pooled_settings, monkeypatch):
+    """A claimed member has no private key left, so a run cannot reach it."""
+    pool_host = await _seed_pool_host(name="lb-pool-1")
+    mocked_provision = AsyncMock()
+    monkeypatch.setattr("hosts.service.HostService.provision", mocked_provision)
+
+    async with async_session_factory() as session:
+        service = HostService(session, settings=pooled_settings)
+        result = await service.get_or_create_host(env={}, image=None, claim_pool=False)
+
+    assert result.id != pool_host.id
+    assert not result.claimed_at
+    mocked_provision.assert_awaited_once()
+
+
 async def test_pool_never_claims_or_sheds_demand_hosts(pooled_settings, monkeypatch):
     # A demand host has claimed_at NULL like a warm member; only pool_member keeps
     # the claim, count and shed away from it.

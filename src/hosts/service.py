@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import ColumnElement, delete, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
@@ -21,6 +21,7 @@ from host_secrets.exceptions import SecretsProxyNotConfiguredError, SecretStatic
 from host_secrets.placeholder import Placeholder
 from hosts import exceptions
 from hosts.models import Host, HostStatus, IdempotencyKey
+from hosts.runs import SYNC_BUDGET_SECONDS, RunResult, run_on_host
 from networking.tailscale import (
     DeviceDiscoveryTimeoutError,
     NetworkError,
@@ -55,6 +56,8 @@ VM_BACKED_STATUSES = frozenset(
         HostStatus.ERROR.value,
     }
 )
+# How long past its sync and its timeout a run's host lives, for teardown.
+RUN_LEASE_GRACE_SECONDS = 300
 RENEWABLE_STATUSES = frozenset(
     {
         HostStatus.BOOTSTRAPPING.value,
@@ -96,6 +99,7 @@ class HostService:
         provider: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        claim_pool: bool = True,
     ) -> Host:
         if provider:
             registered = get_provider_names()
@@ -126,7 +130,12 @@ class HostService:
         # uncustomized request can claim one.
         requested_provider = provider or self.settings.default_host_provider
         customized = env or secrets or image or template or instance_type or disk_gb
-        if not customized and self.settings.get_pool_targets().get(requested_provider):
+        # A pool member's private key went out with the response that created it.
+        if (
+            claim_pool
+            and not customized
+            and self.settings.get_pool_targets().get(requested_provider)
+        ):
             host = await self._try_claim_pool_host(
                 service_account=service_account,
                 provider=requested_provider,
@@ -487,6 +496,74 @@ class HostService:
         await self.session.delete(host)
         await self.session.commit()
         return True
+
+    async def run_command(
+        self,
+        *,
+        service_account: str | None,
+        env: dict[str, str],
+        secrets: dict[str, dict[str, Any]],
+        image: str | None,
+        template: uuid.UUID | None,
+        provider: str | None,
+        instance_type: str | None,
+        disk_gb: int | None,
+        url: str,
+        commit: str,
+        patch: str | None,
+        command: str,
+        timeout: float,
+    ) -> RunResult:
+        """Create a host for one command, run it there, and delete the host."""
+        # The lease starts when the run does and outlives the sync and the command, so the
+        # janitor reaps the host if this request dies and spares a run that is still going.
+        lease = timedelta(seconds=SYNC_BUDGET_SECONDS + timeout + RUN_LEASE_GRACE_SECONDS)
+        max_lifetime = get_vm_provider(provider).max_lifetime
+        # The provider counts the VM's life from its creation, and the lease from the start
+        # of the run, so a run needs the time that provisioning may take as well.
+        needed = lease + timedelta(seconds=self.settings.provisioning_grace_seconds)
+        if max_lifetime and needed > max_lifetime:
+            raise exceptions.RunTooLongError(
+                f"the provider stops its VMs after {max_lifetime.total_seconds():g} seconds; "
+                f"a run of {timeout:g} seconds needs {needed.total_seconds():g}, with "
+                "provisioning and the clone"
+            )
+        host = await self.get_or_create_host(
+            service_account=service_account,
+            env=env,
+            secrets=secrets,
+            image=image,
+            template=template,
+            provider=provider,
+            instance_type=instance_type,
+            disk_gb=disk_gb,
+            claim_pool=False,
+        )
+        try:
+            try:
+                await self.renew_host(host.id, expires_at=utc_now() + lease)
+            except (ResourceNotFoundError, exceptions.HostStateError) as error:
+                # The host went away or left `active` between its creation and now.
+                raise exceptions.HostUnreachableError(
+                    f"the host was lost before the run started: {error}"
+                ) from error
+            return await run_on_host(
+                host, url=url, commit=commit, patch=patch, command=command, timeout=timeout
+            )
+        finally:
+            try:
+                await self.delete_host(host.id)
+            except ResourceNotFoundError:
+                # The host is already gone, which is what the delete is for.
+                pass
+            except (
+                provider_exceptions.ProviderError,
+                NetworkError,
+                SQLAlchemyError,
+                exceptions.HostStateError,
+            ):
+                # The row stays, and the janitor retries it at the end of the lease.
+                logger.exception("could not delete the host of a run: host_id=%s", host.id)
 
     async def provision(self, host: Host) -> None:
         host.status = HostStatus.CREATING_NETWORK.value
