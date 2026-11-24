@@ -7,21 +7,13 @@ import httpx
 import pytest
 import respx
 
-from networking.tailscale import (
-    DeviceDiscoveryTimeoutError,
-    NetworkAuthError,
-    NetworkTransportError,
-    Tailscale,
-    TailscaleAPI,
-    TailscaleAuthKey,
-    TailscaleDevice,
-)
+from networking import tailscale
 
 # --- TailscaleAPI (raw HTTP) -------------------------------------------------
 
 
-def _api() -> TailscaleAPI:
-    return TailscaleAPI(
+def _api() -> tailscale.TailscaleAPI:
+    return tailscale.TailscaleAPI(
         oauth_client_id="client-id",
         oauth_client_secret="secret",
         tailnet="example.ts.net",
@@ -136,7 +128,7 @@ async def test_request_maps_tailscale_auth_error(respx_mock):
     )
 
     api = _api()
-    with pytest.raises(NetworkAuthError):
+    with pytest.raises(tailscale.NetworkAuthError):
         await api._request("POST", "/path", headers={})
 
 
@@ -150,7 +142,7 @@ async def test_request_maps_json_error_without_message(respx_mock):
     )
 
     api = _api()
-    with pytest.raises(NetworkTransportError, match="invalid_client"):
+    with pytest.raises(tailscale.NetworkTransportError, match="invalid_client"):
         await api._request("POST", "/path", headers={})
 
 
@@ -162,29 +154,30 @@ async def test_request_rejects_non_json_response(respx_mock):
     )
 
     api = _api()
-    with pytest.raises(NetworkTransportError, match="non-JSON"):
+    with pytest.raises(tailscale.NetworkTransportError, match="non-JSON"):
         await api._request("POST", "/path", headers={})
 
 
 # --- Tailscale (high level) --------------------------------------------------
 
 
-def _make_tailscale(api: object) -> Tailscale:
-    return Tailscale(api)  # type: ignore[arg-type]
+def _make_tailscale(api: object) -> tailscale.Tailscale:
+    return tailscale.Tailscale(api)  # type: ignore[arg-type]
 
 
-def _fast_tailscale(api: object) -> Tailscale:
+def _fast_tailscale(api: object) -> tailscale.Tailscale:
     # The shared `_DeviceWaiter` polls on the cadence configured at
     # construction time; tests that exercise the polling loop need a tight
     # interval so they don't sit on the default 2s sleep.
-    return Tailscale(api, poll_interval=0.01)  # type: ignore[arg-type]
+    return tailscale.Tailscale(api, poll_interval=0.01)  # type: ignore[arg-type]
 
 
 async def test_issue_join_credentials_returns_authkey_env() -> None:
     api = SimpleNamespace(
         tailnet="example.ts.net",
+        auth_key_tags=("tag:druks-sandbox", "tag:other"),
         create_auth_key=AsyncMock(
-            return_value=TailscaleAuthKey(
+            return_value=tailscale.TailscaleAuthKey(
                 id="key-id",
                 key="tskey-secret",
                 description="auto sb-1234",
@@ -200,8 +193,9 @@ async def test_issue_join_credentials_returns_authkey_env() -> None:
     assert creds.env == {
         "TAILSCALE_AUTHKEY": "tskey-secret",
         "TAILSCALE_HOSTNAME": "sb-1234",
+        "TAILSCALE_ADVERTISE_TAGS": "tag:druks-sandbox,tag:other",
     }
-    assert creds.device_ref is None
+    assert not creds.device_ref
 
 
 async def test_release_device_delegates_to_api() -> None:
@@ -231,9 +225,10 @@ async def test_aclose_delegates_to_api() -> None:
 
 
 def test_from_settings_constructs_with_tailscale_api() -> None:
-    network = Tailscale.from_settings()
+    network = tailscale.Tailscale.from_settings()
     assert network
-    assert isinstance(network.api, TailscaleAPI)
+    assert network.api.tailnet == "example.ts.net"
+    assert network.api.auth_key_tags == ("tag:sandbox",)
 
 
 # --- list_devices ------------------------------------------------------------
@@ -261,8 +256,8 @@ async def test_list_devices_returns_hostname_and_node_id(respx_mock):
     devices = await api.list_devices()
 
     assert devices == [
-        TailscaleDevice(id="n111AAA", hostname="sb-aaa"),
-        TailscaleDevice(id="n222BBB", hostname="sb-bbb"),
+        tailscale.TailscaleDevice(id="n111AAA", hostname="sb-aaa"),
+        tailscale.TailscaleDevice(id="n222BBB", hostname="sb-bbb"),
     ]
 
 
@@ -275,8 +270,8 @@ async def test_wait_for_device_returns_device_id_when_hostname_matches() -> None
         aclose=AsyncMock(),
         list_devices=AsyncMock(
             return_value=[
-                TailscaleDevice(id="n111", hostname="sb-other"),
-                TailscaleDevice(id="n222", hostname="sb-target"),
+                tailscale.TailscaleDevice(id="n111", hostname="sb-other"),
+                tailscale.TailscaleDevice(id="n222", hostname="sb-target"),
             ],
         ),
     )
@@ -296,8 +291,8 @@ async def test_wait_for_device_polls_until_device_appears() -> None:
         list_devices=AsyncMock(
             side_effect=[
                 [],
-                [TailscaleDevice(id="n222", hostname="sb-other")],
-                [TailscaleDevice(id="n333", hostname="sb-target")],
+                [tailscale.TailscaleDevice(id="n222", hostname="sb-other")],
+                [tailscale.TailscaleDevice(id="n333", hostname="sb-target")],
             ],
         ),
     )
@@ -318,7 +313,7 @@ async def test_wait_for_device_raises_after_timeout() -> None:
     )
     network = _fast_tailscale(api)
 
-    with pytest.raises(DeviceDiscoveryTimeoutError):
+    with pytest.raises(tailscale.DeviceDiscoveryTimeoutError):
         await network.wait_for_device(host_name="sb-never", timeout=0.05)
     await network.aclose()
 
@@ -331,8 +326,8 @@ async def test_wait_for_device_swallows_transient_network_errors() -> None:
         aclose=AsyncMock(),
         list_devices=AsyncMock(
             side_effect=[
-                NetworkTransportError("boom"),
-                [TailscaleDevice(id="n777", hostname="sb-recovered")],
+                tailscale.NetworkTransportError("boom"),
+                [tailscale.TailscaleDevice(id="n777", hostname="sb-recovered")],
             ],
         ),
     )
@@ -352,11 +347,11 @@ async def test_wait_for_device_fails_fast_on_auth_error() -> None:
     api = SimpleNamespace(
         tailnet="example.ts.net",
         aclose=AsyncMock(),
-        list_devices=AsyncMock(side_effect=NetworkAuthError("bad token")),
+        list_devices=AsyncMock(side_effect=tailscale.NetworkAuthError("bad token")),
     )
     network = _fast_tailscale(api)
 
-    with pytest.raises(NetworkAuthError, match="bad token"):
+    with pytest.raises(tailscale.NetworkAuthError, match="bad token"):
         await network.wait_for_device(host_name="sb-a", timeout=1.0)
     await network.aclose()
 
@@ -371,10 +366,10 @@ async def test_wait_for_device_shares_listing_across_concurrent_waiters() -> Non
         aclose=AsyncMock(),
         list_devices=AsyncMock(
             return_value=[
-                TailscaleDevice(id="n1", hostname="sb-a"),
-                TailscaleDevice(id="n2", hostname="sb-b"),
-                TailscaleDevice(id="n3", hostname="sb-c"),
-                TailscaleDevice(id="n4", hostname="sb-d"),
+                tailscale.TailscaleDevice(id="n1", hostname="sb-a"),
+                tailscale.TailscaleDevice(id="n2", hostname="sb-b"),
+                tailscale.TailscaleDevice(id="n3", hostname="sb-c"),
+                tailscale.TailscaleDevice(id="n4", hostname="sb-d"),
             ],
         ),
     )

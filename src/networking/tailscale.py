@@ -304,7 +304,7 @@ class _DeviceWaiter:
                 # bad token surfaces as itself rather than a discovery timeout.
                 self._fail_waiters(exc)
                 return
-            except Exception as exc:
+            except NetworkTransportError as exc:
                 # Transient transport/listing errors: log and retry within the
                 # caller's timeout budget.
                 logger.warning("tailscale list_devices failed: %s", exc)
@@ -364,6 +364,8 @@ class Tailscale:
                 {
                     "TAILSCALE_AUTHKEY": auth_key.key,
                     "TAILSCALE_HOSTNAME": host_name,
+                    # A node may only advertise tags that its key carries.
+                    "TAILSCALE_ADVERTISE_TAGS": ",".join(self.api.auth_key_tags),
                 }
             )
         )
