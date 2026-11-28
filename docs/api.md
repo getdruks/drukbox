@@ -43,7 +43,9 @@ service account that first used it. Another one reusing it gets `409`.
 `POST /hosts` returns `503` with `CAPACITY` and `Retry-After` when the
 provider has `HOST_LIMITS` live hosts, or when the caller's service account
 has `HOST_LIMIT_PER_SERVICE_ACCOUNT` live hosts. A live host is not in
-`error` and has not expired. The admin key has no service account limit.
+`error` and has not expired. `HOST_LIMITS` also leaves out an active host
+whose VM the provider stopped while idle. The admin key has no service
+account limit.
 
 `POST /hosts` returns `422` with `ISSUER_REFUSED` when the issuer refuses a
 secret until a person acts. The detail is the issuer's reason, for example

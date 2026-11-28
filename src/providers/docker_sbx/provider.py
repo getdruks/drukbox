@@ -218,10 +218,20 @@ class DockerSbxProvider(VMProvider, TemplateCapability):
         except DockerSbxProviderError as exc:
             raise ProviderTransportError(str(exc)) from exc
 
+    async def get_sleeping_vms(self) -> set[str]:
+        # sandboxd stops a sandbox with no session and starts it on the next exec.
+        try:
+            sandboxes = await self.api.sandboxes()
+            return {sandbox["name"] for sandbox in sandboxes if sandbox["status"] == "stopped"}
+        except DockerSbxProviderError as exc:
+            raise ProviderTransportError(str(exc)) from exc
+        except KeyError as exc:
+            raise ProviderTransportError(f"sbx ls returned a sandbox without {exc}") from exc
+
     async def diagnose(self) -> str:
-        count = await self.api.sandbox_count()
+        sandboxes = await self.api.sandboxes()
         await self.api.check_ssh_endpoint()
-        return f"sandboxd reachable, {count} sandbox(es), SSH endpoint ready"
+        return f"sandboxd reachable, {len(sandboxes)} sandbox(es), SSH endpoint ready"
 
     async def aclose(self) -> None:
         await self.docker.aclose()
