@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
@@ -44,13 +44,14 @@ async def test_create_template_returns_building_then_becomes_available(client, t
     assert payload["image"] == ""
     assert payload["status"] == TemplateStatus.BUILDING.value
     assert payload["last_error"] == ""
-    assert payload["last_used_at"] is None
+    assert not payload["last_used_at"]
     assert "setup_script" not in payload
 
     polled = await client.get(f"/templates/{payload['id']}", headers=AUTH_HEADERS)
 
     assert polled.status_code == 200
     assert polled.json()["status"] == TemplateStatus.AVAILABLE.value
+    assert polled.json()["build_step"] == ""
     assert polled.json()["image"] == derive_image_name(
         base_image=template_provider.base_image_ref,
         setup_script=SETUP_SCRIPT,
@@ -76,6 +77,29 @@ async def test_unexpected_build_crash_is_pollable(client, template_provider):
     assert response.status_code == 202
     assert polled.json()["status"] == TemplateStatus.FAILED.value
     assert polled.json()["last_error"] == "OSError: builder crashed"
+    assert polled.json()["build_step"] == "running setup script"
+
+
+async def test_a_refused_step_write_fails_the_build(client, template_provider):
+    """A step the database refuses ends the build failed, not stuck building."""
+
+    def refuse_the_step(mapper, connection, target: Template) -> None:
+        if target.build_step:
+            raise OSError("step refused")
+
+    event.listen(Template, "before_update", refuse_the_step)
+    try:
+        response = await client.post(
+            "/templates",
+            headers=AUTH_HEADERS,
+            json={"provider": template_provider.name, "setup_script": SETUP_SCRIPT},
+        )
+    finally:
+        event.remove(Template, "before_update", refuse_the_step)
+    polled = await client.get(f"/templates/{response.json()['id']}", headers=AUTH_HEADERS)
+
+    assert polled.json()["status"] == TemplateStatus.FAILED.value
+    assert polled.json()["last_error"] == "OSError: step refused"
 
 
 async def test_unsupported_capability_refuses_template_creation(client, monkeypatch):
@@ -143,6 +167,7 @@ async def test_create_builds_a_failed_template_again_and_keeps_its_error_while_i
     assert second.json()["id"] == first.json()["id"]
     assert second.json()["status"] == TemplateStatus.BUILDING.value
     assert second.json()["last_error"] == "OSError: builder crashed"
+    assert second.json()["build_step"] == ""
     assert polled.json()["status"] == TemplateStatus.AVAILABLE.value
     assert polled.json()["last_error"] == ""
     assert (
@@ -276,7 +301,7 @@ async def test_delete_available_template_removes_provider_artifact(client, templ
     assert response.content == b""
     assert template_provider.deleted == ["stub-template:available"]
     async with async_session_factory() as session:
-        assert await session.get(Template, template.id) is None
+        assert not await session.get(Template, template.id)
 
 
 async def test_delete_tolerates_missing_provider_artifact(client, template_provider):
@@ -292,7 +317,7 @@ async def test_delete_tolerates_missing_provider_artifact(client, template_provi
 
     assert response.status_code == 204
     async with async_session_factory() as session:
-        assert await session.get(Template, template.id) is None
+        assert not await session.get(Template, template.id)
 
 
 async def test_delete_provider_failure_preserves_record(client, template_provider):
@@ -309,7 +334,7 @@ async def test_delete_provider_failure_preserves_record(client, template_provide
     assert response.status_code == 503
     assert response.json()["detail"] == "template teardown could not be completed"
     async with async_session_factory() as session:
-        assert await session.get(Template, template.id) is not None
+        assert await session.get(Template, template.id)
 
 
 async def test_create_template_rejects_unknown_provider(client):
