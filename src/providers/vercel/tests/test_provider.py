@@ -28,9 +28,9 @@ async def provider() -> AsyncIterator[VercelProvider]:
 
 
 @respx.mock
-@pytest.mark.parametrize(("instance_type", "vcpus"), [(None, 2), ("4", 4)])
+@pytest.mark.parametrize(("cpu", "vcpus"), [(None, 2), (4, 4)])
 async def test_create_bootstraps_sandbox_on_the_tailnet(
-    provider: VercelProvider, instance_type: str | None, vcpus: int
+    provider: VercelProvider, cpu: int | None, vcpus: int
 ):
     creation = respx.post(BASE + "v3/sandboxes").respond(201, json=CREATED)
     command = respx.post(COMMANDS).respond(200, json={"command": {"id": "command-1"}})
@@ -40,7 +40,7 @@ async def test_create_bootstraps_sandbox_on_the_tailnet(
         image="custom:v2",
         setup_script="true",
         env={"FOO": "hello world"},
-        instance_type=instance_type,
+        cpu=cpu,
     )
     request = creation.calls[0].request
     assert request.headers["Authorization"] == "Bearer test-token"
@@ -63,15 +63,6 @@ async def test_create_bootstraps_sandbox_on_the_tailnet(
     assert result.name == "sb-test"
     assert result.ssh_username == "root"
     assert not result.ssh_host
-
-
-@respx.mock
-async def test_rejects_instance_type_that_is_not_a_vcpu_count(provider: VercelProvider):
-    with pytest.raises(ProviderCommandError, match="vCPU count"):
-        await provider.create_vm(
-            name="sb-test", image="sandbox:v1", setup_script="true", instance_type="large"
-        )
-    assert not respx.calls
 
 
 @respx.mock

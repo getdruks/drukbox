@@ -46,8 +46,9 @@ The token can also come from `/run/secrets/VERCEL_TOKEN`.
   minutes on Hobby and 24 hours on Pro and Enterprise. No lease ends after
   that time: drukbox cuts a later or permanent `expires_at` to it, at create
   and at renewal.
-- `instance_type` is a vCPU count, such as `"4"`, up to the plan's maximum.
-  Template builds and `disk_gb` are not supported.
+- `cpu` is the vCPU count, up to the plan's maximum. Each vCPU has 2 GB of
+  memory. Template builds, `instance_type`, `disk_gb`, and `memory_gb` are
+  not supported.
 - Without `/dev/net/tun`, Tailscale runs in userspace, so the sandbox reaches
   `SECRETS_PROXY_URL` over its normal outbound network, not over the tailnet.
 - A stopped sandbox loses its files. Keep the janitor running: it deletes the

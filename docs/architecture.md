@@ -53,9 +53,10 @@ its exception types.
 `providers.base.VMProvider` is the base interface:
 
 - `name` / `diagnose_hint` class vars
-- `supports_instance_type` / `supports_disk_gb` class vars — which
-  per-request sizing fields `create_vm` honors; the host service
-  refuses unsupported sizing with a 400 before any row or VM exists
+- `supports_instance_type` / `supports_disk_gb` / `supports_cpu` /
+  `supports_memory_gb` class vars — which per-request sizing fields
+  `create_vm` honors; the host service refuses unsupported sizing with a
+  400 before any row or VM exists
 - `default_image` / `bootstrap_ssh_timeout_seconds` properties
 - `create_vm(...) -> VMCreateResult`
 - `delete_vm(name)`
@@ -77,6 +78,9 @@ the core settings knowing any provider exists.
 
 Not every provider supports every feature. The host contract must not grow
 fields that only one provider uses. Optional features are capability mix-ins.
+Sizing is the exception: `instance_type`, `disk_gb`, `cpu`, and `memory_gb` are
+host fields, and the host service refuses with a 400 the ones a provider
+does not support.
 `TemplateCapability` refreshes base images and builds and deletes templates.
 
 `SecretInjectionCapability` is how a secret reaches a provider's boxes. A
@@ -226,8 +230,9 @@ Two maintenance commands run as cron jobs from the same image:
 When the base digest or setup script changes, the old
 template ages out after its last lease. Pool members
 are warmed with the provider's default image and size, so a request that
-customizes its host — `image`, `env`, `template`, `instance_type`, or
-`disk_gb` — always provisions fresh instead of claiming a warm host.
+customizes its host — `image`, `env`, `template`, `instance_type`,
+`disk_gb`, `cpu`, or `memory_gb` — always provisions fresh instead of claiming a
+warm host.
 
 ## Diagnostics
 

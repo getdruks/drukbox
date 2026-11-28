@@ -39,7 +39,7 @@ The key can also come from `/run/secrets/E2B_API_KEY`.
 - E2B kills a sandbox after `E2B_MAX_LIFETIME_SECONDS`: at most 1 hour or 24
   hours, by E2B plan. No lease ends after that time: drukbox cuts a later or
   permanent `expires_at` to it, at create and at renewal.
-- The template sets CPU, memory, and disk. `instance_type`, `disk_gb`, and
-  template builds are not supported.
+- The template sets CPU, memory, and disk. `instance_type`, `disk_gb`, `cpu`,
+  `memory_gb`, and template builds are not supported.
 - A killed sandbox loses its files. Keep the janitor running: it deletes the
   sandbox and its Tailscale device when the lease ends.

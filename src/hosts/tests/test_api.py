@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from uuid6 import uuid7
@@ -536,6 +537,28 @@ async def test_create_host_stores_and_returns_sizing(client, monkeypatch, stub_p
     assert fetched.json()["disk_gb"] == 200
 
 
+async def test_create_host_stores_a_cpu_and_memory_size_and_does_not_return_it(client, monkeypatch):
+    """Provisioning reads the size off the row. The response leaves it out: a client that
+    builds its host record from the response, as the SDK does, fails on a field it does not
+    know, so a new field in a response is a break for every client that has not upgraded."""
+    monkeypatch.setattr("hosts.service.HostService.provision", AsyncMock())
+
+    response = await client.post(
+        "/hosts",
+        headers={"Authorization": "Bearer service-token"},
+        json={"cpu": 8, "memory_gb": 16},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert "cpu" not in payload
+    assert "memory_gb" not in payload
+    async with async_session_factory() as session:
+        host = await session.get(Host, uuid.UUID(payload["id"]))
+        assert host
+        assert (host.cpu, host.memory_gb) == (8, 16)
+
+
 async def test_create_host_without_sizing_reflects_null(client, monkeypatch):
     """Omitted sizing means the provider's configured default, surfaced as null."""
     monkeypatch.setattr("hosts.service.HostService.provision", AsyncMock())
@@ -548,19 +571,34 @@ async def test_create_host_without_sizing_reflects_null(client, monkeypatch):
     assert not payload["disk_gb"]
 
 
-async def test_create_host_rejects_sizing_the_provider_does_not_support(client):
-    """exe exposes no per-request sizing; the request 400s before any row exists."""
-    for field, value in (("instance_type", "t3.xlarge"), ("disk_gb", 200)):
-        response = await client.post(
-            "/hosts",
-            headers={"Authorization": "Bearer service-token"},
-            json={field: value},
-        )
+@pytest.mark.parametrize(("field", "value"), [("cpu", 4), ("memory_gb", 8)])
+async def test_create_host_refuses_a_size_on_a_provider_that_cannot_size_a_vm(
+    client, stub_provider, field, value
+):
+    response = await client.post(
+        "/hosts",
+        headers={"Authorization": "Bearer service-token"},
+        json={"provider": "stub", field: value},
+    )
 
-        assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert "'exe'" in detail
-        assert field in detail
+    assert response.status_code == 400
+    assert f"provider 'stub' does not support a per-request {field}" in response.json()["detail"]
+    async with async_session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Host)) == 0
+
+
+async def test_create_host_rejects_sizing_the_provider_does_not_support(client):
+    """exe has no instance types; the request 400s before any row exists."""
+    response = await client.post(
+        "/hosts",
+        headers={"Authorization": "Bearer service-token"},
+        json={"instance_type": "t3.xlarge"},
+    )
+
+    assert response.status_code == 400
+    assert (
+        "provider 'exe' does not support a per-request instance_type" in response.json()["detail"]
+    )
 
     async with async_session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(Host)) == 0

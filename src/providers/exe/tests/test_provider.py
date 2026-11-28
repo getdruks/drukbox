@@ -6,9 +6,9 @@ import pytest
 from pydantic import SecretStr
 
 from core.settings import get_settings
+from providers import exceptions as provider_exceptions
 from providers.docker.api import DockerAPI
 from providers.docker.exceptions import DockerImageNotFoundError, DockerTransportError
-from providers.exceptions import ProviderCommandError, ProviderNotFoundError, ProviderTransportError
 from providers.exe.api import ExeAPI
 from providers.exe.exceptions import ExeVMNotFoundError
 from providers.exe.provider import ExeProvider
@@ -60,6 +60,9 @@ async def test_create_vm_forwards_kwargs_and_maps_result() -> None:
         setup_script="#!/bin/bash\necho hello",
         tags=["managed-by-drukbox"],
         registry_auth=None,
+        disk_gb=None,
+        cpu=None,
+        memory_gb=None,
     )
     assert result.provider_id == "sb-1234"
     assert result.name == "sb-1234"
@@ -69,6 +72,16 @@ async def test_create_vm_forwards_kwargs_and_maps_result() -> None:
 
 def _vm_payload() -> dict[str, str]:
     return {"vm_name": "sb-1", "ssh_port": "22", "ssh_dest": "sb-1.public.exe.dev"}
+
+
+async def test_create_vm_passes_the_size_to_exe() -> None:
+    api = SimpleNamespace(create_vm=AsyncMock(return_value=_vm_payload()))
+    provider = _make_provider(api)
+
+    await provider.create_vm(name="sb-1", image="img:latest", disk_gb=50, cpu=8, memory_gb=16)
+
+    kwargs = api.create_vm.await_args.kwargs
+    assert (kwargs["disk_gb"], kwargs["cpu"], kwargs["memory_gb"]) == (50, 8, 16)
 
 
 @pytest.fixture
@@ -127,7 +140,7 @@ async def test_delete_vm_translates_not_found_to_provider_not_found() -> None:
     )
     provider = _make_provider(api)
 
-    with pytest.raises(ProviderNotFoundError, match="sb-1"):
+    with pytest.raises(provider_exceptions.ProviderNotFoundError, match="sb-1"):
         await provider.delete_vm("sb-1")
 
 
@@ -207,7 +220,7 @@ async def test_build_template_image_requires_a_template_repository(
         docker=docker,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderCommandError, match="TEMPLATE_REPOSITORY"):
+    with pytest.raises(provider_exceptions.ProviderCommandError, match="TEMPLATE_REPOSITORY"):
         await provider.build_template_image(
             base_image="exe/base:latest",
             setup_script="apt-get update",
@@ -230,7 +243,7 @@ async def test_build_template_image_translates_push_failure(
         docker=docker,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderTransportError, match="push log tail"):
+    with pytest.raises(provider_exceptions.ProviderTransportError, match="push log tail"):
         await provider.build_template_image(
             base_image="exe/base:latest",
             setup_script="apt-get update",
@@ -261,5 +274,5 @@ async def test_delete_template_image_translates_a_missing_local_image() -> None:
         docker=docker,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderNotFoundError, match="was not found"):
+    with pytest.raises(provider_exceptions.ProviderNotFoundError, match="was not found"):
         await provider.delete_template_image("ghcr.io/acme/drukbox-templates:missing")

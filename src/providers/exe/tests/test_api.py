@@ -5,15 +5,8 @@ import httpx
 import pytest
 import respx
 
+from providers.exe import exceptions
 from providers.exe.api import ExeAPI, _encode_setup_script
-from providers.exe.exceptions import (
-    ExeAuthError,
-    ExeCommandError,
-    ExeIntegrationAlreadyExistsError,
-    ExeIntegrationNotFoundError,
-    ExeResponseError,
-    ExeVMNotFoundError,
-)
 
 
 def _api() -> ExeAPI:
@@ -32,7 +25,7 @@ def test_parse_json_response_merges_json_lines():
 
 
 def test_parse_json_response_rejects_empty_output():
-    with pytest.raises(ExeResponseError, match="empty output"):
+    with pytest.raises(exceptions.ExeResponseError, match="empty output"):
         _api()._parse_json_response("")
 
 
@@ -160,7 +153,7 @@ async def test_create_vm_sets_git_up_with_sudo_for_a_github_secret(respx_mock):
 async def test_create_vm_refuses_a_setup_script_over_the_exe_limit(respx_mock):
     route = respx_mock.post("/exec")
 
-    with pytest.raises(ExeCommandError, match=r"over the exe\.dev limit"):
+    with pytest.raises(exceptions.ExeCommandError, match=r"over the exe\.dev limit"):
         await _api().create_vm(name="sb-1", image="ubuntu:22.04", env={"BIG": "a" * 6000})
 
     assert route.call_count == 0
@@ -221,6 +214,34 @@ async def test_create_vm_emits_registry_auth_flag(respx_mock):
 
 @pytest.mark.asyncio
 @respx.mock(base_url="https://exe.dev")
+async def test_create_vm_emits_the_size_flags(respx_mock):
+    route = respx_mock.post("/exec").mock(
+        return_value=httpx.Response(200, content=b'{"vm_name": "sb-1", "ssh_port": 22}'),
+    )
+
+    await _api().create_vm(name="sb-1", image="ubuntu:22.04", disk_gb=50, cpu=8, memory_gb=16)
+
+    body = route.calls.last.request.content.decode()
+    assert "--disk=50GB --cpu=8 --memory=16GB" in body
+
+
+@pytest.mark.asyncio
+@respx.mock(base_url="https://exe.dev")
+async def test_create_vm_emits_only_the_size_it_is_given(respx_mock):
+    route = respx_mock.post("/exec").mock(
+        return_value=httpx.Response(200, content=b'{"vm_name": "sb-1", "ssh_port": 22}'),
+    )
+
+    await _api().create_vm(name="sb-1", image="ubuntu:22.04", cpu=4)
+
+    body = route.calls.last.request.content.decode()
+    assert "--cpu=4" in body
+    assert "--memory" not in body
+    assert "--disk" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock(base_url="https://exe.dev")
 async def test_create_vm_omits_setup_script_when_none(respx_mock):
     route = respx_mock.post("/exec").mock(
         return_value=httpx.Response(200, content=b'{"vm_name": "sb-1", "ssh_port": 22}'),
@@ -239,7 +260,7 @@ async def test_request_maps_auth_error(respx_mock):
         return_value=httpx.Response(401, json={"error": "auth"}),
     )
 
-    with pytest.raises(ExeAuthError):
+    with pytest.raises(exceptions.ExeAuthError):
         await _api()._request("whoami")
 
 
@@ -250,7 +271,7 @@ async def test_request_maps_command_error(respx_mock):
         return_value=httpx.Response(400, content=b"bad command"),
     )
 
-    with pytest.raises(ExeCommandError, match="bad command"):
+    with pytest.raises(exceptions.ExeCommandError, match="bad command"):
         await _api()._request("bad")
 
 
@@ -273,7 +294,7 @@ async def test_request_names_exception_type_for_blank_transport_error(respx_mock
     read_timeout = httpx.ReadTimeout("")
     respx_mock.post("/exec").mock(side_effect=read_timeout)
 
-    with pytest.raises(ExeResponseError, match="ReadTimeout") as exc_info:
+    with pytest.raises(exceptions.ExeResponseError, match="ReadTimeout") as exc_info:
         await _api()._request("new --json")
 
     assert exc_info.value.__cause__ is read_timeout
@@ -347,7 +368,7 @@ async def test_delete_vm_maps_not_found_error(respx_mock):
         return_value=httpx.Response(400, content=b"vm 'vm-1' not found"),
     )
 
-    with pytest.raises(ExeVMNotFoundError, match="vm-1"):
+    with pytest.raises(exceptions.ExeVMNotFoundError, match="vm-1"):
         await _api().delete_vm("vm-1")
 
 
@@ -378,7 +399,7 @@ async def test_create_http_proxy_maps_already_exists(respx_mock):
         return_value=httpx.Response(400, content=b"integration already exists"),
     )
 
-    with pytest.raises(ExeIntegrationAlreadyExistsError):
+    with pytest.raises(exceptions.ExeIntegrationAlreadyExistsError):
         await _api().create_http_proxy(
             name="mirror",
             target="https://httpbin.org/",
@@ -443,7 +464,7 @@ async def test_list_http_proxies_rejects_invalid_integration_name(respx_mock):
         return_value=httpx.Response(200, json=[{"name": None, "type": "http-proxy"}])
     )
 
-    with pytest.raises(ExeResponseError, match="invalid name"):
+    with pytest.raises(exceptions.ExeResponseError, match="invalid name"):
         await _api().list_http_proxies()
 
 
@@ -454,7 +475,7 @@ async def test_delete_http_proxy_maps_not_found(respx_mock):
         return_value=httpx.Response(400, content=b"integration not found"),
     )
 
-    with pytest.raises(ExeIntegrationNotFoundError):
+    with pytest.raises(exceptions.ExeIntegrationNotFoundError):
         await _api().delete_http_proxy("missing")
 
 
@@ -475,7 +496,7 @@ async def test_attach_http_proxy_maps_missing_vm(respx_mock):
         return_value=httpx.Response(400, content=b"vm vm-1 not found"),
     )
 
-    with pytest.raises(ExeVMNotFoundError):
+    with pytest.raises(exceptions.ExeVMNotFoundError):
         await _api().attach_http_proxy("mirror", attach_vm="vm-1")
 
 
@@ -496,7 +517,7 @@ async def test_detach_http_proxy_maps_missing_vm(respx_mock):
         return_value=httpx.Response(400, content=b"vm vm-1 not found"),
     )
 
-    with pytest.raises(ExeVMNotFoundError):
+    with pytest.raises(exceptions.ExeVMNotFoundError):
         await _api().detach_http_proxy("mirror", attach_vm="vm-1")
 
 
@@ -509,7 +530,7 @@ async def test_attach_http_proxy_routes_integration_not_found_even_when_message_
         return_value=httpx.Response(400, content=b"integration 'mirror' not found for vm:vm-1"),
     )
 
-    with pytest.raises(ExeIntegrationNotFoundError):
+    with pytest.raises(exceptions.ExeIntegrationNotFoundError):
         await _api().attach_http_proxy("mirror", attach_vm="vm-1")
 
 
@@ -522,5 +543,5 @@ async def test_detach_http_proxy_routes_integration_not_found_even_when_message_
         return_value=httpx.Response(400, content=b"http-proxy 'mirror' not found on vm:vm-1"),
     )
 
-    with pytest.raises(ExeIntegrationNotFoundError):
+    with pytest.raises(exceptions.ExeIntegrationNotFoundError):
         await _api().detach_http_proxy("mirror", attach_vm="vm-1")

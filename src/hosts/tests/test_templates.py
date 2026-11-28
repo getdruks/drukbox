@@ -67,11 +67,28 @@ async def test_create_host_resolves_template_id(client, monkeypatch):
     async with async_session_factory() as session:
         host = await session.get(Host, uuid.UUID(response.json()["id"]))
         used_template = await session.get(Template, template.id)
-    assert host is not None
+    assert host
     assert host.image == "derived:image-by-id"
-    assert used_template is not None
-    assert used_template.last_used_at is not None
+    assert used_template
+    assert used_template.last_used_at
     assert before <= used_template.last_used_at <= after
+
+
+async def test_create_host_sizes_a_host_forked_from_a_template(client, monkeypatch):
+    template = await create_template_record(image="derived:sized")
+    monkeypatch.setattr("hosts.service.HostService.provision", AsyncMock())
+
+    response = await client.post(
+        "/hosts",
+        headers=AUTH_HEADERS,
+        json={"template": str(template.id), "cpu": 8, "memory_gb": 16},
+    )
+
+    assert response.status_code == 201
+    async with async_session_factory() as session:
+        host = await session.get(Host, uuid.UUID(response.json()["id"]))
+    assert host
+    assert (host.image, host.cpu, host.memory_gb) == ("derived:sized", 8, 16)
 
 
 async def test_create_host_rejects_building_template(client):

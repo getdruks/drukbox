@@ -56,6 +56,8 @@ class ExoscaleProvider(VMProvider):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         key_name = f"drukbox-{name}"
         private_key, public_key = generate_ed25519_keypair()

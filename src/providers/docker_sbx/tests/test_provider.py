@@ -52,6 +52,19 @@ def _provider(
 
 
 @pytest.mark.asyncio
+async def test_create_vm_takes_the_size_of_the_request_over_the_settings(tmp_path):
+    api = _api_mock()
+    provider = _provider(api, _settings(tmp_path, cpus=4, memory="8g"))
+
+    await provider.create_vm(
+        name="sb-test", image="drukbox/sbx-sandbox:latest", env={}, cpu=8, memory_gb=16
+    )
+
+    create_kwargs = api.create_sandbox.await_args.kwargs
+    assert (create_kwargs["cpus"], create_kwargs["memory"]) == (8, "16g")
+
+
+@pytest.mark.asyncio
 async def test_create_vm_creates_a_sized_sandbox_and_returns_key_material(tmp_path):
     api = _api_mock()
     provider = _provider(api, _settings(tmp_path, cpus=4, memory="8g"))

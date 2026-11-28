@@ -66,6 +66,8 @@ class DockerProvider(VMProvider, TemplateCapability):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult:
         caller_env = env or {}
         # These names carry the per-VM public key, the SSH user, and the env-key

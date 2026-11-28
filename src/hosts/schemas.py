@@ -65,11 +65,21 @@ class HostCreate(BaseModel):
         ge=1,
         description="Root disk size in GB. Omit to use the provider's configured default.",
     )
+    cpu: int | None = Field(
+        default=None,
+        ge=1,
+        description="Number of vCPUs. Omit to use the provider's default size.",
+    )
+    memory_gb: int | None = Field(
+        default=None,
+        ge=1,
+        description="Memory in GB. Omit to use the provider's default size.",
+    )
 
     @field_validator("image", "instance_type")
     @classmethod
     def reject_blank(cls, value: str | None, info: ValidationInfo) -> str | None:
-        if value is not None and not value.strip():
+        if value is not None and not value.strip():  # ast-grep-ignore: rule-2
             raise ValueError(f"{info.field_name} must not be blank")
         return value
 

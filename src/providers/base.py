@@ -78,6 +78,8 @@ class VMProvider(abc.ABC):
     # HostService rejects a sized request before any row or VM exists.
     supports_instance_type: ClassVar[bool] = False
     supports_disk_gb: ClassVar[bool] = False
+    supports_cpu: ClassVar[bool] = False
+    supports_memory_gb: ClassVar[bool] = False
     # Hosts join the tailnet at boot and callers reach them over it.
     tailnet: bool = False
     # Set when the provider stops every VM this long after create.
@@ -105,6 +107,8 @@ class VMProvider(abc.ABC):
         setup_script: str | None = None,
         instance_type: str | None = None,
         disk_gb: int | None = None,
+        cpu: int | None = None,
+        memory_gb: int | None = None,
     ) -> VMCreateResult: ...
 
     @abc.abstractmethod

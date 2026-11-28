@@ -58,6 +58,8 @@ async def create_host(
             provider=host_create.provider,
             instance_type=host_create.instance_type,
             disk_gb=host_create.disk_gb,
+            cpu=host_create.cpu,
+            memory_gb=host_create.memory_gb,
         )
     except (UnknownProviderError, UnsupportedSizingError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
