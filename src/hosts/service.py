@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import ColumnElement, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
@@ -292,7 +292,16 @@ class HostService:
             pool_member=pool_member,
         )
         if vm.name in self.settings.host_limits:
-            live = await self._count_live_hosts(f"provider:{vm.name}", Host.provider == vm.name)
+            try:
+                sleeping = await vm.get_sleeping_vms()
+            except provider_exceptions.ProviderError as exc:
+                raise exceptions.ProvisioningFailedError(str(exc)) from exc
+            # A stopped VM holds no memory. A host that is still provisioning
+            # counts whatever its VM shows, since it is about to run.
+            running = or_(Host.status != HostStatus.ACTIVE.value, Host.name.not_in(sleeping))
+            live = await self._count_live_hosts(
+                f"provider:{vm.name}", and_(Host.provider == vm.name, running)
+            )
             if live >= self.settings.host_limits[vm.name]:
                 raise exceptions.HostCapacityError(f"provider {vm.name!r} is at its host limit")
         self.session.add(host)

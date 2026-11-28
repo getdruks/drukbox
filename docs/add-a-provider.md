@@ -98,6 +98,10 @@ instead.
 Set `max_lifetime` when the provider stops every VM after a fixed time. No
 lease then ends later than that time.
 
+Override `get_sleeping_vms` when the provider stops an idle VM and starts it again
+on the next connection. `HOST_LIMITS` does not count an active host whose VM
+it names.
+
 Set `tailnet = True` when the provider's hosts have no public SSH address.
 A provider that offers both paths reads a `<NAME>_TAILNET` setting into
 `self.tailnet`, like `providers/hetzner/`.

@@ -160,6 +160,7 @@ class Settings(BaseSettings):
         validation_alias="HOST_LIMITS",
         description=(
             'Most live hosts per provider, as JSON (e.g. {"exe": 28, "docker": 6}). '
+            "An active host whose VM the provider stopped while idle does not count. "
             "A provider it does not name has no limit."
         ),
     )

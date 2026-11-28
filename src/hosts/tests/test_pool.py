@@ -8,10 +8,11 @@ from uuid6 import uuid7
 
 from core.database import async_session_factory
 from core.settings import Settings, get_settings
-from hosts.exceptions import HostCapacityError
+from hosts.exceptions import HostCapacityError, ProvisioningFailedError
 from hosts.models import Host, HostStatus
 from hosts.pool import _MAX_CONSECUTIVE_CREATE_FAILURES, maintain_pool
 from hosts.service import HostService, utc_now
+from providers.exceptions import ProviderTransportError
 from providers.exe.settings import ExeSettings
 
 
@@ -60,6 +61,7 @@ async def _seed_pool_host(
     expires_at: datetime | None = None,
     pool_member: bool = True,
     env: dict[str, str] | None = None,
+    service_account: str | None = None,
 ) -> Host:
     now = utc_now()
     host = Host(
@@ -78,6 +80,7 @@ async def _seed_pool_host(
         expires_at=expires_at,
         claimed_at=claimed_at,
         pool_member=pool_member,
+        service_account=service_account,
         last_error="",
     )
     async with async_session_factory() as session:
@@ -222,6 +225,84 @@ async def test_create_host_refuses_a_provider_at_its_host_limit(monkeypatch, stu
         counted = await session.execute(select(Host.provider, func.count()).group_by(Host.provider))
 
     assert {provider: count for provider, count in counted.all()} == {"exe": 1, "stub": 1}
+
+
+async def test_create_host_gives_the_slot_of_a_stopped_vm(monkeypatch, stub_provider):
+    monkeypatch.setenv("HOST_LIMITS", '{"stub": 1}')
+    settings = Settings()  # pyright: ignore[reportCallIssue]
+    await _seed_pool_host(name="lb-stopped", provider="stub", pool_member=False)
+    monkeypatch.setattr(stub_provider, "get_sleeping_vms", AsyncMock(return_value={"lb-stopped"}))
+    mocked_provision = AsyncMock()
+    monkeypatch.setattr("hosts.service.HostService.provision", mocked_provision)
+
+    async with async_session_factory() as session:
+        await HostService(session, settings=settings).create_host(
+            env={}, image=None, provider="stub"
+        )
+
+    mocked_provision.assert_awaited_once()
+
+
+async def test_a_provisioning_host_keeps_its_slot_whatever_its_vm_shows(monkeypatch, stub_provider):
+    monkeypatch.setenv("HOST_LIMITS", '{"stub": 1}')
+    settings = Settings()  # pyright: ignore[reportCallIssue]
+    await _seed_pool_host(
+        name="lb-creating",
+        provider="stub",
+        status=HostStatus.CREATING_VM.value,
+        pool_member=False,
+    )
+    monkeypatch.setattr(stub_provider, "get_sleeping_vms", AsyncMock(return_value={"lb-creating"}))
+    monkeypatch.setattr("hosts.service.HostService.provision", AsyncMock())
+
+    async with async_session_factory() as session:
+        with pytest.raises(HostCapacityError):
+            await HostService(session, settings=settings).create_host(
+                env={}, image=None, provider="stub"
+            )
+
+
+async def test_create_host_fails_when_the_provider_cannot_list_its_sleeping_vms(
+    monkeypatch, stub_provider
+):
+    monkeypatch.setenv("HOST_LIMITS", '{"stub": 1}')
+    settings = Settings()  # pyright: ignore[reportCallIssue]
+    monkeypatch.setattr(
+        stub_provider,
+        "get_sleeping_vms",
+        AsyncMock(side_effect=ProviderTransportError("sandboxd is not reachable")),
+    )
+
+    async with async_session_factory() as session:
+        with pytest.raises(ProvisioningFailedError, match="sandboxd is not reachable"):
+            await HostService(session, settings=settings).create_host(
+                env={}, image=None, provider="stub"
+            )
+        counted = await session.execute(select(func.count()).select_from(Host))
+
+    assert not counted.scalar_one()
+
+
+async def test_a_stopped_vm_still_counts_against_its_service_account(monkeypatch, stub_provider):
+    # HOST_LIMITS does not gate a wake, so this limit bounds what one caller can wake at once.
+    monkeypatch.setenv("HOST_LIMITS", '{"stub": 1}')
+    monkeypatch.setenv("HOST_LIMIT_PER_SERVICE_ACCOUNT", "1")
+    settings = Settings()  # pyright: ignore[reportCallIssue]
+    await _seed_pool_host(
+        name="lb-stopped", provider="stub", pool_member=False, service_account="account-a"
+    )
+    monkeypatch.setattr(stub_provider, "get_sleeping_vms", AsyncMock(return_value={"lb-stopped"}))
+    monkeypatch.setattr("hosts.service.HostService.provision", AsyncMock())
+
+    async with async_session_factory() as session:
+        service = HostService(session, settings=settings)
+        with pytest.raises(HostCapacityError, match="service account"):
+            await service.get_or_create_host(
+                service_account="account-a", env={}, image=None, provider="stub"
+            )
+        await service.get_or_create_host(
+            service_account="account-b", env={}, image=None, provider="stub"
+        )
 
 
 async def test_create_host_skips_pool_when_sized(multi_pool_settings, monkeypatch, stub_provider):
