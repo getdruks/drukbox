@@ -100,6 +100,7 @@ class TemplateService:
         if winner.status == TemplateStatus.FAILED.value:
             # last_error stays readable until the new build ends.
             winner.status = TemplateStatus.BUILDING.value
+            winner.build_step = ""
             winner.updated_at = now
             await self.session.commit()
             return winner, True
@@ -113,6 +114,11 @@ class TemplateService:
             # Release the read transaction before a minutes-long provider build.
             await session.commit()
 
+            async def record_step(step: str) -> None:
+                # Setup script output can carry NUL, which a Postgres text column refuses.
+                template.build_step = step.replace("\x00", "")
+                await session.commit()
+
             try:
                 capability = resolve_capability(
                     get_vm_provider(template.provider),
@@ -122,8 +128,12 @@ class TemplateService:
                     base_image=template.base_image_ref,
                     setup_script=template.setup_script,
                     label=template.label,
+                    record_step=record_step,
                 )
             except Exception as exc:
+                # A step write that failed leaves the session rolled back and the record expired.
+                await session.rollback()
+                await session.refresh(template)
                 logger.exception(
                     "template build failed: template_id=%s provider=%s",
                     template.id,
@@ -135,6 +145,7 @@ class TemplateService:
                 template.image = image
                 template.status = TemplateStatus.AVAILABLE.value
                 template.last_error = ""
+                template.build_step = ""
 
             template.updated_at = utc_now()
             await session.commit()
